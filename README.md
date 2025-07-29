@@ -14,7 +14,7 @@ To assist users in efficiently discovering and selecting products by providing t
 *   **Detailed Attributes**: Provides clear information on product attributes.
 
 ## Usage Example
-"Find me a durable, waterproof backpack suitable for hiking under $150."
+"Find me a durable, waterproof   backpack suitable for hiking under $150."
 
 ## Required Environment Variables
 To run the Shopping Partner Agent, you need to set the following environment variables in your `.env` file:
