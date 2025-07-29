@@ -5,6 +5,7 @@ exa-py
 fastapi
 requests
 uvicorn
+agno
 python-dotenv
 typing-extensions
 a2a-sdk[sqlite]
