@@ -1,6 +1,5 @@
 httpx
 pydantic
-openai
 exa-py
 fastapi
 requests
@@ -10,4 +9,5 @@ python-dotenv
 typing-extensions
 a2a-sdk[sqlite]
 sqlalchemy
+google-genai
 uagents-adapter

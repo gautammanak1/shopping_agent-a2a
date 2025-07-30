@@ -5,7 +5,7 @@ from a2a.server.events import EventQueue
 from a2a.types import Part, TextPart
 from a2a.utils import new_agent_text_message
 from agno.agent import Agent, Message, RunResponse
-from agno.models.openai import OpenAIChat
+from agno.models.google import Gemini # Corrected import path for Gemini
 from agno.tools.exa import ExaTools
 from typing_extensions import override
 from dotenv import load_dotenv
@@ -15,7 +15,7 @@ load_dotenv()
 # Define your agno.agent shopping partner
 shopping_partner_agno_agent = Agent(
     name="shopping partner",
-    model=OpenAIChat(id="gpt-4o"), # Using gpt-4o as per your request
+    model=Gemini(id="gemini-2.0-flash"), # Changed model ID to gemini-2.0-flash
     instructions=[
         "You are a highly detailed product recommender agent specializing in finding products that precisely match user preferences.",
         "Prioritize finding products that satisfy as many user requirements as possible, but ensure a minimum match of 50%.",

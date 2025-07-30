@@ -1,7 +1,7 @@
 import os
 from threading import Thread
 from typing import Dict, List
-from adpter import SingleA2AAdapter, A2AAgentConfig, a2a_servers
+from  adpter import SingleA2AAdapter, A2AAgentConfig, a2a_servers
 from shopping_agent import ShoppingAgentExecutor
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -39,7 +39,7 @@ class ShoppingPartnerSystem:
             A2AAgentConfig(
                 name="shopping_partner_specialist",
                 description="AI Agent for product recommendations and shopping assistance.",
-                url="http://localhost:10022", # The URL where the A2A server for this agent will run
+                url="http://localhost:10020", # The URL where the A2A server for this agent will run
                 port=10020, # The port for the A2A server
                 specialties=[
                     "product recommendations", "shopping", "e-commerce",
@@ -53,13 +53,14 @@ class ShoppingPartnerSystem:
         }
         print("✅ Shopping Partner Agent configuration created")
 
-    def start_individual_a2a_servers(self):
-        """
-        Starts the individual A2A server for the shopping partner agent.
-        """
-        print("🔄 Starting Shopping Partner server...")
-        a2a_servers(self.agent_configs, self.executors)
-        print("✅ Shopping Partner server started!")
+    # Removed this function as SingleA2AAdapter handles its own A2A server
+    # def start_individual_a2a_servers(self):
+    #     """
+    #     Starts the individual A2A server for the shopping partner agent.
+    #     """
+    #     print("🔄 Starting Shopping Partner server...")
+    #     a2a_servers(self.agent_configs, self.executors)
+    #     print("✅ Shopping Partner server started!")
 
     def create_coordinator(self):
         """
@@ -89,7 +90,7 @@ class ShoppingPartnerSystem:
         print("🚀 Starting Shopping Partner System")
         try:
             self.setup_agents()
-            self.start_individual_a2a_servers()
+            # Removed the call to start_individual_a2a_servers()
             coordinator = self.create_coordinator()
             self.running = True
             print(f"🎯 Starting Shopping Partner coordinator on port {coordinator.port}...")
