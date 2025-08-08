@@ -1,0 +1,22 @@
+services:
+  shopping-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"   # FastAPI server
+      - "8200:8200"   # uAgent coordinator
+      - "10020:10020" # A2A server
+    environment:
+      - PYTHONUNBUFFERED=1
+      - UAGENT_MESSAGE_TIMEOUT=120
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    networks:
+      - shopping-agent-network
+
+networks:
+  shopping-agent-network:
+    driver: bridge

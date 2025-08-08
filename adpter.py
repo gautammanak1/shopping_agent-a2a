@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
-
 import httpx
 import uvicorn
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -22,6 +21,11 @@ from uagents_core.contrib.protocols.chat import (
     TextContent,
     chat_protocol_spec,
 )
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class A2AAgentConfig:
@@ -37,7 +41,6 @@ class A2AAgentConfig:
     priority: int = 1
 
     def __post_init__(self):
-        """Auto-generate missing fields if not provided."""
         if self.skills is None:
             self.skills = [
                 specialty.replace(" ", "_").lower() for specialty in self.specialties
@@ -50,7 +53,6 @@ class A2AAgentConfig:
             self.keywords = self._generate_keywords_from_specialties()
 
     def _generate_keywords_from_specialties(self) -> list[str]:
-        """Generate keywords dynamically from specialties."""
         keywords = []
         keywords.extend([specialty.lower() for specialty in self.specialties])
         for specialty in self.specialties:
@@ -59,15 +61,12 @@ class A2AAgentConfig:
         return list(set(keywords))
 
 class QueryMessage(BaseModel):
-    """Input message model for A2A agent."""
     query: str
 
 class ResponseMessage(BaseModel):
-    """Output message model for A2A agent."""
     response: str
 
 class SingleA2AAdapter:
-    """Original A2A Adapter for backward compatibility."""
     def __init__(
         self,
         agent_executor: AgentExecutor,
@@ -89,47 +88,37 @@ class SingleA2AAdapter:
         self.a2a_server = None
         self.server_thread = None
         self.agent_ports = agent_ports or []
-        # Create uAgent
         self.uagent = Agent(name=name, port=port, seed=self.seed, mailbox=mailbox)
-        # Create chat protocol
         self.chat_proto = Protocol(spec=chat_protocol_spec)
         self._setup_protocols()
 
     def _setup_protocols(self):
-        """Setup uAgent protocols."""
         @self.chat_proto.on_message(ChatMessage)
         async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
+            logger.info(f"📩 Received message from {sender}: {msg.content}")
             for item in msg.content:
                 if isinstance(item, TextContent):
-                    ctx.logger.info(f"📩 Received message from {sender}: {item.text}")
+                    logger.info(f"Processing text content: {item.text}")
                     try:
-                        # Send to A2A agent and get response
                         response = await self._send_to_a2a_agent(
                             item.text, f"http://localhost:{self.a2a_port}"
                         )
-                        # --- FIX: Removed truncation from log message ---
-                        ctx.logger.info(f"🤖 A2A Response: {response}")
-                        # --- END FIX ---
-                        # Send response back to sender
+                        logger.info(f"🤖 A2A Response: {response}")
                         response_msg = ChatMessage(
                             timestamp=datetime.now(timezone.utc),
                             msg_id=uuid4(),
                             content=[TextContent(type="text", text=response)],
                         )
                         await ctx.send(sender, response_msg)
-                        ctx.logger.info(f"📤 Sent response back to {sender}")
-                        # Send acknowledgment for the original message
+                        logger.info(f"📤 Sent response back to {sender}")
                         ack_msg = ChatAcknowledgement(
                             timestamp=datetime.now(timezone.utc),
                             acknowledged_msg_id=msg.msg_id,
                         )
                         await ctx.send(sender, ack_msg)
-                        ctx.logger.info(
-                            f"✅ Sent acknowledgment for message {msg.msg_id}"
-                        )
+                        logger.info(f"✅ Sent acknowledgment for message {msg.msg_id}")
                     except Exception as e:
-                        ctx.logger.error(f"❌ Error processing message: {str(e)}")
-                        # Send error response
+                        logger.error(f"❌ Error processing message: {str(e)}", exc_info=True)
                         error_response = ChatMessage(
                             timestamp=datetime.now(timezone.utc),
                             msg_id=uuid4(),
@@ -141,23 +130,18 @@ class SingleA2AAdapter:
 
         @self.chat_proto.on_message(ChatAcknowledgement)
         async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
-            ctx.logger.info(
-                f"✅ Message acknowledged: {msg.acknowledged_msg_id} from {sender}"
-            )
+            logger.info(f"✅ Message acknowledged: {msg.acknowledged_msg_id} from {sender}")
 
         @self.uagent.on_event("startup")
         async def on_start(ctx: Context):
-            ctx.logger.info(f"🚀 A2A uAgent started at address: {self.uagent.address}")
-            ctx.logger.info(f"🔗 A2A Server running on port: {self.a2a_port}")
+            logger.info(f"🚀 A2A uAgent started at address: {self.uagent.address}")
+            logger.info(f"🔗 A2A Server running on port: {self.a2a_port}")
 
-        # Include the chat protocol
         self.uagent.include(self.chat_proto, publish_manifest=True)
 
     async def _send_to_a2a_agent(self, message: str, a2a_url: str) -> str:
-        """Send message to A2A agent and get response."""
         async with httpx.AsyncClient() as httpx_client:
             try:
-                # Try the correct A2A endpoint format
                 payload = {
                     "id": uuid4().hex,
                     "params": {
@@ -173,52 +157,48 @@ class SingleA2AAdapter:
                         },
                     },
                 }
-                # Send to A2A agent endpoint
-                try:
-                    response = await httpx_client.post(
-                        f"{a2a_url}/",
-                        json=payload,
-                        headers={"Content-Type": "application/json"},
-                        timeout=90, # Set timeout to 90 seconds
-                    )
-                    if response.status_code == 200:
-                        result = response.json()
-                        if "result" in result:
-                            result_data = result["result"]
-                            if "artifacts" in result_data:
-                                artifacts = result_data["artifacts"]
-                                full_text = ""
-                                for artifact in artifacts:
-                                    if "parts" in artifact:
-                                        for part in artifact["parts"]:
-                                            if part.get("kind") == "text":
-                                                full_text += part.get("text", "")
-                                if full_text.strip():
-                                    return full_text.strip()
-                            elif (
-                                "parts" in result_data and len(result_data["parts"]) > 0
-                            ):
-                                response_text = result_data["parts"][0].get("text", "")
-                                if response_text:
-                                    return response_text.strip()
-                            return "✅ Response received from A2A agent"
+                logger.debug(f"Sending payload to A2A agent: {payload}")
+                response = await httpx_client.post(
+                    f"{a2a_url}/",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=90,
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.debug(f"A2A response: {result}")
+                    if "result" in result:
+                        result_data = result["result"]
+                        if "artifacts" in result_data:
+                            artifacts = result_data["artifacts"]
+                            full_text = ""
+                            for artifact in artifacts:
+                                if "parts" in artifact:
+                                    for part in artifact["parts"]:
+                                        if part.get("kind") == "text":
+                                            full_text += part.get("text", "")
+                            if full_text.strip():
+                                return full_text.strip()
+                        elif "parts" in result_data and len(result_data["parts"]) > 0:
+                            response_text = result_data["parts"][0].get("text", "")
+                            if response_text:
+                                return response_text.strip()
+                        return "✅ Response received from A2A agent"
                     else:
                         return f"A2A agent returned HTTP {response.status_code}"
-                except Exception as e:
-                    return f"❌ Error communicating with A2A agent: {str(e)}"
-                return await self._call_executor_directly(message)
+                else:
+                    return await self._call_executor_directly(message)
             except Exception as e:
-                return f"❌ Error communicating with A2A agent: {str(e)}"
+                logger.error(f"❌ Error communicating with A2A agent: {str(e)}", exc_info=True)
+                return await self._call_executor_directly(message)
 
     async def _call_executor_directly(self, message: str) -> str:
-        """Call the agent executor directly as fallback."""
         try:
             agent_message = new_agent_text_message(message)
             context = RequestContext(
                 message=agent_message, context_id=uuid4().hex, task_id=uuid4().hex
             )
             event_queue = EventQueue()
-            # Execute the agent
             await self.agent_executor.execute(context, event_queue)
             events = []
             while not event_queue.empty():
@@ -235,12 +215,11 @@ class SingleA2AAdapter:
                     return str(last_event)
             return "✅ Task completed successfully"
         except Exception as e:
+            logger.error(f"❌ Direct executor call failed: {str(e)}", exc_info=True)
             return f"❌ Direct executor call failed: {str(e)}"
 
     def _start_a2a_server(self):
-        """Start the A2A server in a separate thread."""
         def run_server():
-            # Create A2A server components
             skill = AgentSkill(
                 id=f"{self.name.lower()}_skill",
                 name=self.name,
@@ -277,15 +256,11 @@ class SingleA2AAdapter:
         time.sleep(2)
 
     def run(self):
-        """Run both A2A server and uAgent."""
-        print(f"🚀 Starting A2A Adapter for '{self.name}'")
-        print(f"📡 A2A Server will run on port {self.a2a_port}")
-        print(f"🤖 uAgent will run on port {self.port}")
-        # Start A2A server
+        logger.info(f"🚀 Starting A2A Adapter for '{self.name}'")
+        logger.info(f"📡 A2A Server will run on port {self.a2a_port}")
+        logger.info(f"🤖 uAgent will run on port {self.port}")
         self._start_a2a_server()
-        # Run uAgent (this will block)
         self.uagent.run()
-
 class MultiA2AAdapter:
     def __init__(
         self,

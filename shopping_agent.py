@@ -1,21 +1,25 @@
-import asyncio # Import asyncio for timeout handling
+import asyncio
 from typing import List
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Part, TextPart
 from a2a.utils import new_agent_text_message
 from agno.agent import Agent, Message, RunResponse
-from agno.models.google import Gemini # Corrected import path for Gemini
+from agno.models.google import Gemini
 from agno.tools.exa import ExaTools
 from typing_extensions import override
 from dotenv import load_dotenv
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Define your agno.agent shopping partner
 shopping_partner_agno_agent = Agent(
     name="shopping partner",
-    model=Gemini(id="gemini-2.0-flash"), # Changed model ID to gemini-2.0-flash
+    model=Gemini(id="gemini-2.0-flash"),
     instructions=[
         "You are a highly detailed product recommender agent specializing in finding products that precisely match user preferences.",
         "Prioritize finding products that satisfy as many user requirements as possible, but ensure a minimum match of 50%.",
@@ -43,7 +47,6 @@ shopping_partner_agno_agent = Agent(
 class ShoppingAgentExecutor(AgentExecutor):
     """
     AgentExecutor wrapper for the agno.agent shopping partner.
-    This class allows the agno agent to be integrated with the A2A adapter.
     """
     def __init__(self):
         self.agent = shopping_partner_agno_agent
@@ -69,36 +72,31 @@ class ShoppingAgentExecutor(AgentExecutor):
             return
 
         message: Message = Message(role="user", content=message_content)
-        print(f"DEBUG: [ShoppingAgentExecutor] Received message: {message.content}")
+        logger.info(f"Received message: {message.content}")
         
         try:
-            # Set a timeout for the agno agent's execution
-            print("DEBUG: [ShoppingAgentExecutor] Starting agno agent run with timeout...")
-            # Increased timeout to 180 seconds (3 minutes) for more detailed research
-            result: RunResponse = await asyncio.wait_for(self.agent.arun(message), timeout=180) 
-            print(f"DEBUG: [ShoppingAgentExecutor] Agno agent finished run. Response content type: {type(result.content)}")
+            logger.info("Starting agno agent run with timeout...")
+            result: RunResponse = await asyncio.wait_for(self.agent.arun(message), timeout=180)
+            logger.info(f"Agno agent finished run. Response content type: {type(result.content)}")
             
-            response_text = str(result.content) 
+            response_text = str(result.content)
             await event_queue.enqueue_event(new_agent_text_message(response_text))
-            print("DEBUG: [ShoppingAgentExecutor] Event enqueued successfully.")
+            logger.info("Event enqueued successfully.")
 
         except asyncio.TimeoutError:
             error_message = "Agno agent execution timed out after 180 seconds. The query might be too complex or require more time."
-            print(f"❌ {error_message}")
+            logger.error(error_message)
             await event_queue.enqueue_event(new_agent_text_message(f"Error: {error_message}. Please try again or simplify your query."))
         except Exception as e:
             error_message = f"Error during agno agent execution: {e}"
-            print(f"❌ {error_message}")
-            import traceback
-            traceback.print_exc()
+            logger.error(error_message, exc_info=True)
             await event_queue.enqueue_event(new_agent_text_message(f"Error: {error_message}. Please check logs for details."))
         
-        print("DEBUG: [ShoppingAgentExecutor] execute method finished.")
+        logger.info("execute method finished.")
 
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         """
         Cancels the agent's execution.
-        (Basic implementation: raises an exception as cancellation is not supported here).
         """
         raise Exception("Cancel not supported for this agent executor.")
