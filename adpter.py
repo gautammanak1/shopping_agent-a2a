@@ -144,6 +144,7 @@ class SingleA2AAdapter:
             try:
                 payload = {
                     "id": uuid4().hex,
+                    "method": "message/send",  # Changed to correct method
                     "params": {
                         "message": {
                             "role": "user",
@@ -261,6 +262,7 @@ class SingleA2AAdapter:
         logger.info(f"🤖 uAgent will run on port {self.port}")
         self._start_a2a_server()
         self.uagent.run()
+
 class MultiA2AAdapter:
     def __init__(
         self,
@@ -288,31 +290,25 @@ class MultiA2AAdapter:
         self.routing_strategy = routing_strategy
         self.model = model
         self.base_url = base_url
-        # Runtime agent discovery
         self.discovered_agents: dict[str, dict[str, Any]] = {}
         self.agent_health: dict[str, bool] = {}
-        # Create uAgent
         self.uagent = Agent(name=name, port=port, seed=self.seed, mailbox=mailbox)
-        # Create chat protocol
         self.chat_proto = Protocol(spec=chat_protocol_spec)
         self._setup_protocols()
 
     def add_agent_config(self, config: A2AAgentConfig):
-        """Add a new agent configuration."""
         self.agent_configs.append(config)
         print(f"✅ Added agent config: {config.name}")
         print(f"   - Specialties: {', '.join(config.specialties or [])}")
         print(f"   - Keywords: {', '.join(config.keywords or [])}")
 
     def _setup_protocols(self):
-        """Setup uAgent protocols."""
         @self.chat_proto.on_message(ChatMessage)
         async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
             for item in msg.content:
                 if isinstance(item, TextContent):
                     ctx.logger.info(f"📩 Received message from {sender}: {item.text}")
                     try:
-                        # Find the best agent for the query
                         best_agent = await self._route_query(item.text, ctx)
                         if not best_agent:
                             if self.fallback_executor:
@@ -320,7 +316,6 @@ class MultiA2AAdapter:
                             else:
                                 response = "❌ No suitable agent found for this query."
                         else:
-                            # Send to the best A2A agent and get response
                             response = await self._send_to_a2a_agent(
                                 item.text,
                                 best_agent.get("url", best_agent.get("endpoint")),
@@ -329,7 +324,6 @@ class MultiA2AAdapter:
                                 f"A2A Response from {best_agent.get('name', 'unknown agent')}: "
                                 f"{response[:100]}..."
                             )
-                        # Send response back to sender
                         response_msg = ChatMessage(
                             timestamp=datetime.now(timezone.utc),
                             msg_id=uuid4(),
@@ -337,7 +331,6 @@ class MultiA2AAdapter:
                         )
                         await ctx.send(sender, response_msg)
                         ctx.logger.info(f"📤 Sent response back to {sender}")
-                        # Send acknowledgment for the original message
                         ack_msg = ChatAcknowledgement(
                             timestamp=datetime.now(timezone.utc),
                             acknowledged_msg_id=msg.msg_id,
@@ -348,7 +341,6 @@ class MultiA2AAdapter:
                         )
                     except Exception as e:
                         ctx.logger.error(f"❌ Error processing message: {str(e)}")
-                        # Send error response
                         error_response = ChatMessage(
                             timestamp=datetime.now(timezone.utc),
                             msg_id=uuid4(),
@@ -368,14 +360,11 @@ class MultiA2AAdapter:
         async def on_start(ctx: Context):
             ctx.logger.info(f"🚀 A2A uAgent started at address: {self.uagent.address}")
             ctx.logger.info(f"🔗 Managing {len(self.agent_configs)} configured agents")
-            # Discover and health check all agents on startup
             await self._discover_and_health_check_agents(ctx)
 
-        # Include the chat protocol
         self.uagent.include(self.chat_proto, publish_manifest=True)
 
     async def _discover_and_health_check_agents(self, ctx: Context = None):
-        """Discover available A2A agents and perform health checks."""
         self.discovered_agents = {}
         self.agent_health = {}
         async with httpx.AsyncClient() as client:
@@ -426,10 +415,8 @@ class MultiA2AAdapter:
                         print(f"❌ Could not discover agent {config.name}: {str(e)}")
 
     async def _route_query(self, query: str, ctx: Context) -> dict[str, Any] | None:
-        """Route query to the most suitable agent based on routing strategy."""
         if not self.discovered_agents:
             await self._discover_and_health_check_agents(ctx)
-        # Filter healthy agents
         healthy_agents = [
             agent
             for name, agent in self.discovered_agents.items()
@@ -443,13 +430,11 @@ class MultiA2AAdapter:
         elif self.routing_strategy == "round_robin":
             return await self._route_round_robin(healthy_agents, ctx)
         else:
-            # Default to keyword matching
             return await self._route_by_keywords(query, healthy_agents, ctx)
 
     async def _route_by_keywords(
         self, query: str, agents: list[dict], ctx: Context
     ) -> dict[str, Any] | None:
-        """Route query based on keyword matching and scoring."""
         query_lower = query.lower()
         best_agent = None
         best_score = 0
@@ -462,25 +447,21 @@ class MultiA2AAdapter:
         for agent in agents:
             score = 0
             agent_name = agent.get("name", "unknown")
-            # Check keywords (highest priority)
             keywords = agent.get("keywords", [])
             for keyword in keywords:
                 if keyword.lower() in query_lower:
-                    score += 15  # High score for exact keyword match
+                    score += 15
                     ctx.logger.info(
                         f"   🎯 {agent_name}: keyword '{keyword}' matched (+15)"
                     )
-            # Check specialties (high priority)
             specialties = agent.get("specialties", [])
             for specialty in specialties:
                 specialty_lower = specialty.lower()
-                # Check for exact specialty match
                 if specialty_lower in query_lower:
                     score += 12
                     ctx.logger.info(
                         f"   🎯 {agent_name}: specialty '{specialty}' matched (+12)"
                     )
-                # Check for word overlap in specialties
                 specialty_words = set(specialty_lower.split())
                 common_words = query_words.intersection(specialty_words)
                 if common_words:
@@ -489,14 +470,12 @@ class MultiA2AAdapter:
                     ctx.logger.info(
                         f" {agent_name}: specialty words {common_words} matched (+{word_score})"
                     )
-            # Check skills (medium priority)
             skills = agent.get("skills", [])
             for skill in skills:
                 skill_lower = skill.lower().replace("_", " ")
                 if skill_lower in query_lower:
                     score += 8
                     ctx.logger.info(f"   🎯 {agent_name}: skill '{skill}' matched (+8)")
-                # Check for word overlap in skills
                 skill_words = set(skill_lower.split())
                 common_words = query_words.intersection(skill_words)
                 if common_words:
@@ -505,7 +484,6 @@ class MultiA2AAdapter:
                     ctx.logger.info(
                         f" {agent_name}: skill words {common_words} matched (+{word_score})"
                     )
-            # Apply priority multiplier
             priority = agent.get("priority", 1)
             if priority > 1:
                 score = int(score * priority)
@@ -521,7 +499,6 @@ class MultiA2AAdapter:
             return best_agent
         else:
             ctx.logger.info(f"🤷 No suitable agent found (best score: {best_score})")
-            # Return the first agent as fallback if no good match
             if agents:
                 fallback_agent = agents[0]
                 ctx.logger.info(
@@ -533,9 +510,7 @@ class MultiA2AAdapter:
     async def _llm_route_query(
         self, query: str, agents: list[dict], ctx: Context
     ) -> dict[str, Any] | None:
-        """Use LLM to intelligently route the query to the most suitable agent."""
         try:
-            # Create agent descriptions for the LLM
             agent_descriptions = []
             for i, agent in enumerate(agents):
                 agent_desc = (
@@ -557,7 +532,6 @@ class MultiA2AAdapter:
                 f"3. Return ONLY the number (1, 2, 3, or 4) of the best agent"
                 f"Response format: Just return the number (e.g., '2')"
             )
-            # Call ASI API
             url = self.base_url
             payload = {
                 "model": self.model,
@@ -580,9 +554,8 @@ class MultiA2AAdapter:
                 if "choices" in result and len(result["choices"]) > 0:
                     llm_response = result["choices"][0]["message"]["content"].strip()
                     ctx.logger.info(f"🤖 LLM routing response: '{llm_response}'")
-                    # Parse the LLM response to get agent index
                     try:
-                        agent_index = int(llm_response) - 1  # Convert to 0-based index
+                        agent_index = int(llm_response) - 1
                         if 0 <= agent_index < len(agents):
                             selected_agent = agents[agent_index]
                             ctx.logger.info(
@@ -610,7 +583,6 @@ class MultiA2AAdapter:
     async def _route_round_robin(
         self, agents: list[dict], ctx: Context
     ) -> dict[str, Any] | None:
-        """Route query using round-robin strategy."""
         if not hasattr(self, "_round_robin_index"):
             self._round_robin_index = 0
         if agents:
@@ -621,12 +593,11 @@ class MultiA2AAdapter:
         return None
 
     async def _send_to_a2a_agent(self, message: str, a2a_url: str) -> str:
-        """Send message to a specific A2A agent and get response."""
         async with httpx.AsyncClient() as httpx_client:
             try:
-                # Prepare A2A message payload
                 payload = {
                     "id": uuid4().hex,
+                    "method": "message/send",  # Changed to correct method
                     "params": {
                         "message": {
                             "role": "user",
@@ -640,7 +611,6 @@ class MultiA2AAdapter:
                         },
                     },
                 }
-                # Send to A2A agent endpoint
                 try:
                     response = await httpx_client.post(
                         f"{a2a_url}/",
@@ -650,10 +620,8 @@ class MultiA2AAdapter:
                     )
                     if response.status_code == 200:
                         result = response.json()
-                        # Extract the response content from A2A format
                         if "result" in result:
                             result_data = result["result"]
-                            # Handle artifacts format (streaming responses)
                             if "artifacts" in result_data:
                                 artifacts = result_data["artifacts"]
                                 full_text = ""
@@ -664,47 +632,38 @@ class MultiA2AAdapter:
                                                 full_text += part.get("text", "")
                                 if full_text.strip():
                                     return full_text.strip()
-                            # Handle standard parts format
                             elif (
                                 "parts" in result_data and len(result_data["parts"]) > 0
                             ):
                                 response_text = result_data["parts"][0].get("text", "")
                                 if response_text:
                                     return response_text.strip()
-                            # Fallback: return success message
                             return "✅ Response received from A2A agent"
                     else:
                         return f"A2A agent returned HTTP {response.status_code}"
                 except Exception as e:
                     return f"❌ Error communicating with A2A agent: {str(e)}"
-                # If endpoint failed
                 return f"❌ Could not communicate with A2A agent at {a2a_url}"
             except Exception as e:
                 return f"❌ Error communicating with A2A agent: {str(e)}"
 
     async def _call_fallback_executor(self, message: str) -> str:
-        """Call the fallback executor if no suitable agent is found."""
         try:
-            # Create a mock request context
             agent_message = new_agent_text_message(message)
             context = RequestContext(
                 message=agent_message, context_id=uuid4().hex, task_id=uuid4().hex
             )
-            # Create event queue to capture responses
             event_queue = EventQueue()
-            # Execute the fallback agent
             if self.fallback_executor is not None:
                 await self.fallback_executor.execute(context, event_queue)
             else:
                 return "❌ No fallback executor is configured."
-            # Get the response from the event queue
             events = []
             while not event_queue.empty():
                 event = await event_queue.dequeue_event()
                 if event:
                     events.append(event)
             if events:
-                # Get the last event which should be the response
                 last_event = events[-1]
                 if hasattr(last_event, "parts") and last_event.parts:
                     return last_event.parts[0].text
@@ -717,24 +676,15 @@ class MultiA2AAdapter:
             return f"❌ Fallback executor call failed: {str(e)}"
 
     def run(self):
-        """Run the multi-agent uAgent."""
         print(f"🚀 Starting A2A Multi-Agent Adapter: '{self.name}'")
         print(f"🤖 uAgent will run on port {self.port}")
         print(f"📊 Managing {len(self.agent_configs)} agents")
         print(f"🎯 Routing strategy: {self.routing_strategy}")
-        # Print agent summary
         for config in self.agent_configs:
             print(f"   • {config.name}: {', '.join(config.specialties or [])}")
         self.uagent.run()
 
-def a2a_servers(    agent_configs: list[A2AAgentConfig], executors: dict[str, AgentExecutor]):
-    """
-    Start individual A2A servers for each agent config and executor.
-    Each server runs in a separate thread.
-    Args:
-        agent_configs: List of A2AAgentConfig objects.
-        executors: Dict mapping agent name to its AgentExecutor instance.
-    """
+def a2a_servers(agent_configs: list[A2AAgentConfig], executors: dict[str, AgentExecutor]):
     def start_server(config: A2AAgentConfig, executor: AgentExecutor):
         try:
             skill = AgentSkill(
